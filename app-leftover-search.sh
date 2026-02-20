@@ -3,9 +3,9 @@
 # app-leftover-search.sh
 #
 # Searches common macOS locations for leftover files from a deleted application.
-# Performs a case-sensitive search for the app name as provided, plus a separate
-# case-sensitive search for the lowercase form to catch bundle identifiers
-# (e.g., com.developer.appname).
+# Performs a case-insensitive search for the app name. If the name contains
+# spaces, also searches for hyphenated and underscored variants
+# (e.g., "Good Notes" also matches good-notes and good_notes).
 #
 # Usage:
 #   ./app-leftover-search.sh "AppName"
@@ -26,7 +26,6 @@ if [ -z "$app_name" ]; then
     exit 1
 fi
 
-app_lower="$(echo "$app_name" | tr '[:upper:]' '[:lower:]')"
 safe_name="$(echo "$app_name" | sed 's/ /-/g')"
 output_file="$HOME/Desktop/${safe_name}-extras.txt"
 tmp_results="$(mktemp /tmp/app-leftover-search.XXXXXX)"
@@ -35,9 +34,10 @@ trap 'rm -f "$tmp_results"' EXIT
 
 # -----------------------------------------------------------------------------
 # search_location DIR DESCRIPTION [DEPTH]
-#   Searches DIR (case-sensitive) for files/folders whose name contains the app
-#   name or its lowercase variant. Results are appended to tmp_results as
-#   tab-separated "path<TAB>description" lines.
+#   Searches DIR (case-insensitive) for files/folders whose name contains the
+#   app name (and hyphenated/underscored variants if the name has spaces).
+#   Results are appended to tmp_results as tab-separated "path<TAB>description"
+#   lines.
 # -----------------------------------------------------------------------------
 search_location() {
     local dir="$1"
@@ -46,13 +46,18 @@ search_location() {
 
     [ -d "$dir" ] || return 0
 
-    if [ "$app_name" = "$app_lower" ]; then
-        find "$dir" -maxdepth "$depth" -name "*${app_name}*" 2>/dev/null || true
-    else
-        find "$dir" -maxdepth "$depth" \( -name "*${app_name}*" -o -name "*${app_lower}*" \) 2>/dev/null || true
-    fi | while IFS= read -r match; do
-        printf '%s\t%s\n' "$match" "$description" >> "$tmp_results"
-    done
+    local name_expr=(-iname "*${app_name}*")
+
+    if [[ "$app_name" == *" "* ]]; then
+        local hyphenated="${app_name// /-}"
+        local underscored="${app_name// /_}"
+        name_expr=(\( -iname "*${app_name}*" -o -iname "*${hyphenated}*" -o -iname "*${underscored}*" \))
+    fi
+
+    find "$dir" -maxdepth "$depth" "${name_expr[@]}" 2>/dev/null || true \
+    | while IFS= read -r match; do
+        printf '%s\t%s\n' "$match" "$description"
+    done >> "$tmp_results"
 }
 
 # ========================== User Library ======================================
